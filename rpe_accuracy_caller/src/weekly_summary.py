@@ -1,96 +1,104 @@
 """
-Weekly summary generator.
+Weekly RPE accuracy summary — analyst-style Telegram message.
 
-Produces a concise Telegram-friendly message covering:
-  - The most recent block's summary stats per lift
-  - Last 2 weeks of set-level RPE deviation detail
+Sections:
+  1. Last block summary table (lift | n | mean dev | σ | verdict)
+  2. Last 2 weeks — set-level detail table per lift
+  3. Images: weekly deviation trend + cross-block calibration bar chart
 """
 
 from __future__ import annotations
 
 import datetime
+import statistics
 from .analyzer import BlockLiftSummary, SetAccuracy
-from .parser import LiftSet
 
 LIFT_LABELS = {"SQ": "Squat", "BN": "Bench", "DL": "Deadlift"}
 
 
-def _trend(mean_dev: float) -> str:
+def _verdict(mean_dev: float, std: float) -> str:
     if abs(mean_dev) < 0.25:
-        return "✅ calibrated"
+        return "✅ on"
     elif mean_dev > 1.0:
-        return "🔺🔺 over-rating"
+        return "🔺 over"
     elif mean_dev > 0:
-        return "🔺 slightly over"
+        return "↑ slight"
     elif mean_dev < -1.0:
-        return "🔻🔻 under-rating"
+        return "🔻 under"
     else:
-        return "🔻 slightly under"
+        return "↓ slight"
 
 
 def build_weekly_message(summaries: list[BlockLiftSummary]) -> str:
-    """
-    Build a concise Telegram-ready weekly summary message.
-    Uses the last block found in summaries.
-    Shows last 2 weeks of deviation for each lift.
-    """
     if not summaries:
-        return "No RPE data found to summarise."
+        return "No RPE data found."
 
-    # Find the most recent block (last in list order, which matches block sheet order)
     last_block_name = summaries[-1].block
     last_block = [s for s in summaries if s.block == last_block_name]
 
-    # Find max week index across all lifts in this block
-    all_weeks = set()
-    for s in last_block:
-        for acc in s.set_accuracies:
-            all_weeks.add(acc.lift_set.week_index)
+    # Max week in this block
+    all_weeks = {acc.lift_set.week_index
+                 for s in last_block for acc in s.set_accuracies}
     if not all_weeks:
-        return "No sets found in last block."
+        return "No sets in last block."
 
     max_week = max(all_weeks)
-    last_2_weeks = {max_week - 1, max_week} if max_week > 0 else {max_week}
+    last_2 = {max_week - 1, max_week} if max_week > 0 else {max_week}
 
+    date_str = datetime.datetime.utcnow().strftime("%d %b %Y")
     lines = []
-    lines.append(f"📊 *RPE Accuracy — Weekly Report*")
+
+    # ── Header ──
+    lines.append(f"📊 *RPE Accuracy Report — {date_str}*")
     lines.append(f"Block: *{last_block_name}*\n")
 
-    lines.append("*Block Summary (all weeks)*")
+    # ── Block summary table ──
+    lines.append("*Block Summary*")
+    lines.append("```")
+    lines.append(f"{'Lift':<8} {'N':>3}  {'Mean':>6}  {'σ':>5}  {'e1RM':>7}  {'Call'}")
+    lines.append(f"{'─'*8} {'─'*3}  {'─'*6}  {'─'*5}  {'─'*7}  {'─'*8}")
     for s in last_block:
         label = LIFT_LABELS.get(s.lift_type, s.lift_type)
-        top = s.top_set
+        verdict = _verdict(s.mean_deviation, s.std_deviation)
         lines.append(
-            f"  {label}: mean dev {s.mean_deviation:+.2f} RPE | "
-            f"σ {s.std_deviation:.2f} | {_trend(s.mean_deviation)}"
+            f"{label:<8} {s.n:>3}  {s.mean_deviation:>+6.2f}  "
+            f"{s.std_deviation:>5.2f}  "
+            f"{s.top_set_e1rm:>6.0f}lb  {verdict}"
         )
-        lines.append(
-            f"    Top set: {top.load_lbs:.0f} lbs × {top.reps_actual} @ RPE {top.rpe_actual} "
-            f"→ e1RM ≈ {s.top_set_e1rm:.0f} lbs"
-        )
+    lines.append("```")
 
-    lines.append(f"\n*Last 2 Weeks (Wk {max_week} & {max_week+1}) — Set Detail*")
+    # ── Last 2 weeks detail ──
+    lines.append(f"\n*Last 2 Weeks (Wk {max_week} & {max_week+1})*")
 
     for s in last_block:
-        label = LIFT_LABELS.get(s.lift_type, s.lift_type)
         recent = sorted(
-            [a for a in s.set_accuracies if a.lift_set.week_index in last_2_weeks],
+            [a for a in s.set_accuracies if a.lift_set.week_index in last_2],
             key=lambda a: (a.lift_set.week_index, -a.lift_set.load_lbs)
         )
         if not recent:
             continue
 
-        lines.append(f"\n  *{label}*")
-        lines.append(f"  {'Wk':>2}  {'Load':>6}  {'Reps':>4}  {'Rated':>6}  {'Exp':>5}  {'Dev':>5}")
+        label = LIFT_LABELS.get(s.lift_type, s.lift_type)
+
+        # compute weekly avg dev for these 2 weeks
+        devs = [a.deviation for a in recent]
+        avg_dev = statistics.mean(devs)
+        verdict = _verdict(avg_dev, statistics.stdev(devs) if len(devs) > 1 else 0)
+
+        lines.append(f"\n*{label}* — avg dev {avg_dev:+.2f} {verdict}")
+        lines.append("```")
+        lines.append(f"{'Wk':>2}  {'Load':>5}  {'×':>1}{'Reps':<4}  {'Rated':>5}  {'Exp':>5}  {'Dev':>5}")
+        lines.append(f"{'──':>2}  {'─────':>5}  {'─'*5}  {'─────':>5}  {'─────':>5}  {'─────':>5}")
         for acc in recent:
             lines.append(
-                f"  {acc.lift_set.week_index+1:>2}  "
-                f"{acc.lift_set.load_lbs:>6.0f}  "
-                f"{acc.lift_set.reps_actual:>4}  "
-                f"{acc.rated_rpe:>6.1f}  "
+                f"{acc.lift_set.week_index+1:>2}  "
+                f"{acc.lift_set.load_lbs:>5.0f}  "
+                f"×{acc.lift_set.reps_actual:<4}  "
+                f"{acc.rated_rpe:>5.1f}  "
                 f"{acc.expected_rpe:>5.1f}  "
                 f"{acc.deviation:>+5.1f}"
             )
+        lines.append("```")
 
-    lines.append(f"\n_Generated {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC_")
+    lines.append(f"\n_Anchored to top set per lift. Dev = Rated − Expected (Mike T chart)._")
     return "\n".join(lines)
