@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Optional
 
 from .analyzer import BlockLiftSummary, SetAccuracy
 
@@ -18,11 +17,11 @@ LIFT_LABELS = {"SQ": "Squat", "BN": "Bench Press", "DL": "Deadlift"}
 
 def _trend_emoji(mean_dev: float) -> str:
     if abs(mean_dev) < 0.25:
-        return "✅"   # well calibrated
+        return "✅"
     elif mean_dev > 0:
-        return "🔺"   # consistently rating harder than chart predicts
+        return "🔺"
     else:
-        return "🔻"   # consistently rating easier than chart predicts
+        return "🔻"
 
 
 def format_console_report(summaries: list[BlockLiftSummary]) -> str:
@@ -35,6 +34,7 @@ def format_console_report(summaries: list[BlockLiftSummary]) -> str:
         f"  +ve → you rated the set HARDER than the chart predicts\n"
         f"  −ve → you rated the set EASIER than the chart predicts\n"
         f"  ✅ well-calibrated (|mean| < 0.25)  🔺 over-rating  🔻 under-rating\n"
+        f"  e1RM anchor = ensemble of top high-stress sets (RPE ≥ 8.0)\n"
     )
 
     current_block = None
@@ -51,14 +51,18 @@ def format_console_report(summaries: list[BlockLiftSummary]) -> str:
 
         lines.append(f"\n  {lift_label} ({s.lift_type})  {trend}")
         lines.append(
-            f"    Top set (anchor):  {top.load_lbs:.0f} lbs × {top.reps_actual} reps "
-            f"@ RPE {top.rpe_actual}  →  e1RM ≈ {s.top_set_e1rm:.1f} lbs"
+            f"    e1RM anchor (ensemble):  ≈ {s.top_set_e1rm:.1f} lbs  "
+            f"({s.ensemble_size} high-stress sets)"
         )
-        lines.append(f"    Sets analysed:     {s.n}")
-        lines.append(f"    Mean deviation:    {s.mean_deviation:+.2f} RPE")
-        lines.append(f"    Std deviation:     {s.std_deviation:.2f} RPE")
-        lines.append(f"    Median deviation:  {s.median_deviation:+.2f} RPE")
-        lines.append(f"    Range:             {s.min_deviation:+.2f} to {s.max_deviation:+.2f} RPE")
+        lines.append(
+            f"    Display top set:         {top.load_lbs:.0f} lbs × {top.reps_actual} reps "
+            f"@ RPE {top.rpe_actual}"
+        )
+        lines.append(f"    Sets analysed:           {s.n}")
+        lines.append(f"    Mean deviation:          {s.mean_deviation:+.2f} RPE")
+        lines.append(f"    Std deviation:           {s.std_deviation:.2f} RPE")
+        lines.append(f"    Median deviation:        {s.median_deviation:+.2f} RPE")
+        lines.append(f"    Range:                   {s.min_deviation:+.2f} to {s.max_deviation:+.2f} RPE")
 
         # Weekly progression table
         lines.append(f"\n    {'Wk':>3}  {'Load':>6}  {'Reps':>4}  {'Rated':>6}  {'Expect':>6}  {'Dev':>6}")
@@ -76,13 +80,14 @@ def format_console_report(summaries: list[BlockLiftSummary]) -> str:
     lines.append(f"\n{'=' * 72}")
     lines.append("  OVERALL SUMMARY")
     lines.append(f"{'=' * 72}\n")
-    lines.append(f"  {'Block':<14} {'Lift':<12} {'N':>4}  {'Mean Dev':>9}  {'Std':>6}  {'Calibration'}")
-    lines.append(f"  {'-'*14} {'-'*12} {'----':>4}  {'-'*9}  {'-'*6}  {'-'*12}")
+    lines.append(f"  {'Block':<14} {'Lift':<12} {'N':>4}  {'Mean Dev':>9}  {'Std':>6}  {'e1RM':>7}  {'Cal.'}")
+    lines.append(f"  {'-'*14} {'-'*12} {'----':>4}  {'-'*9}  {'-'*6}  {'-'*7}  {'-'*12}")
     for s in summaries:
         trend = _trend_emoji(s.mean_deviation)
         lines.append(
             f"  {s.block:<14} {LIFT_LABELS.get(s.lift_type, s.lift_type):<12} "
-            f"{s.n:>4}  {s.mean_deviation:>+9.2f}  {s.std_deviation:>6.2f}  {trend}"
+            f"{s.n:>4}  {s.mean_deviation:>+9.2f}  {s.std_deviation:>6.2f}  "
+            f"{s.top_set_e1rm:>6.0f}  {trend}"
         )
     lines.append("")
     return "\n".join(lines)
@@ -95,7 +100,7 @@ def export_csv(summaries: list[BlockLiftSummary]) -> str:
     writer.writerow([
         "block", "lift_type", "week", "load_lbs", "reps_actual",
         "rpe_rated", "rpe_expected", "deviation",
-        "e1rm_implied_lbs", "block_top_set_e1rm_lbs"
+        "e1rm_implied_lbs", "block_ensemble_e1rm_lbs", "ensemble_size"
     ])
     for s in summaries:
         for acc in sorted(s.set_accuracies, key=lambda a: (a.lift_set.week_index, -a.lift_set.load_lbs)):
@@ -110,5 +115,6 @@ def export_csv(summaries: list[BlockLiftSummary]) -> str:
                 round(acc.deviation, 2),
                 round(acc.e1rm_implied, 1),
                 round(s.top_set_e1rm, 1),
+                s.ensemble_size,
             ])
     return output.getvalue()

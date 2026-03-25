@@ -77,10 +77,15 @@ def full_cli_report(summaries: list[BlockLiftSummary]) -> str:
         lines.append(_sub(f"{label}  ({s.lift_type})"))
 
         top = s.top_set
-        lines.append(f"  Ground-truth top set:")
+        lines.append(f"  Ensemble e1RM anchor:")
+        lines.append(
+            f"    ≈ {s.top_set_e1rm:.1f} lbs  ({s.top_set_e1rm * 0.453592:.1f} kg)"
+            f"  ←  {s.ensemble_size} high-stress sets (RPE ≥ 8.0)"
+        )
+        lines.append(f"  Display top set:")
         lines.append(
             f"    {top.load_lbs:.0f} lbs × {top.reps_actual} reps @ RPE {top.rpe_actual}"
-            f"  →  e1RM ≈ {s.top_set_e1rm:.1f} lbs  ({s.top_set_e1rm * 0.453592:.1f} kg)"
+            f"  (week {top.week_index + 1})"
         )
         lines.append(f"\n  Calibration stats ({s.n} sets):")
         lines.append(f"    Verdict:          {_trend_label(s.mean_deviation)}")

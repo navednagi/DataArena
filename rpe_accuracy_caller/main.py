@@ -3,21 +3,28 @@
 rpe-accuracy-caller
 ───────────────────
 Compares your rated RPEs against Mike T's chart expectations,
-anchored to your actual top-set performance per block.
+anchored to an ensemble of high-stress sets per block (RPE ≥ 8.0, top 5 by
+implied e1RM, trimmed mean). More robust than a single top-set anchor.
 
 Modes
 ─────
-  (default)        Concise console report + summary table
-  --full           Full verbose breakdown: per-set bars, weekly averages,
-                   cross-block drift analysis
-  --weekly         Telegram-ready weekly summary message (last block + last 2 weeks)
-  --csv <file>     Export per-set data to CSV (combinable with any mode)
+  (default)          Concise console report + summary table
+  --full             Full verbose breakdown: per-set bars, weekly averages,
+                     cross-block drift analysis
+  --weekly           Telegram-ready weekly summary: current week vs prior 2 weeks,
+                     drift callouts, block-level calibration table
+  --blockX <name>    Deep drill-down for a single block: week-by-week table,
+                     session-by-day breakdown, rolling 3-week avg, ASCII charts
+                     e.g. --blockX "Block 5"
+  --csv <file>       Export per-set data to CSV (combinable with any mode)
 
 Usage
 ─────
   python main.py <workbook.xlsx>
   python main.py <workbook.xlsx> --full
   python main.py <workbook.xlsx> --weekly
+  python main.py <workbook.xlsx> --blockX "Block 5"
+  python main.py <workbook.xlsx> --blockX "Block 5" --csv block5.csv
   python main.py <workbook.xlsx> --full --csv rpe_data.csv
 """
 
@@ -33,12 +40,14 @@ if __name__ == "__main__" and __package__ is None:
     from src.report import format_console_report, export_csv
     from src.cli_report import full_cli_report
     from src.weekly_summary import build_weekly_message
+    from src.block_drill import block_drill_report
 else:
     from .src.parser import parse_workbook
     from .src.analyzer import analyze_all
     from .src.report import format_console_report, export_csv
     from .src.cli_report import full_cli_report
     from .src.weekly_summary import build_weekly_message
+    from .src.block_drill import block_drill_report
 
 
 def main():
@@ -54,7 +63,11 @@ def main():
     )
     parser.add_argument(
         "--weekly", action="store_true",
-        help="Telegram-ready weekly summary: last block stats + last 2 weeks detail"
+        help="Weekly summary: current week vs prior 2 weeks, with drift callouts"
+    )
+    parser.add_argument(
+        "--blockX", metavar="BLOCK_NAME",
+        help='Deep drill-down for a single block (e.g. --blockX "Block 5")'
     )
     parser.add_argument(
         "--csv", metavar="OUTPUT_CSV",
@@ -78,7 +91,9 @@ def main():
 
     summaries = analyze_all(blocks)
 
-    if args.weekly:
+    if args.blockX:
+        print(block_drill_report(summaries, args.blockX))
+    elif args.weekly:
         print(build_weekly_message(summaries))
     elif args.full:
         print(full_cli_report(summaries))
